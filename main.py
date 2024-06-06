@@ -1,3 +1,4 @@
+import sqlalchemy.exc
 from flask import Flask, render_template, request, url_for, redirect, flash, send_from_directory, session, abort
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_sqlalchemy import SQLAlchemy
@@ -41,12 +42,17 @@ def register():
     if request.method == 'POST':
         user = User(
             email=request.form.get('email'),
-            password=request.form.get('password'),
+            password=generate_password_hash(request.form.get('password')),
             name=request.form.get('name'),
             alternative_id=str(uuid.uuid4())
         )
-        db.session.add(user)
-        db.session.commit()
+        try:
+            db.session.add(user)
+            db.session.commit()
+        except sqlalchemy.exc.IntegrityError as e:
+            if any('user.email' in arg for arg in e.args):
+                flash('Email already in use.', 'warning')
+            return redirect(url_for('login'))
         login_user(user)
         return redirect(url_for('secrets'))
     return render_template("register.html")
@@ -55,12 +61,12 @@ def register():
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
+        next_page = request.args.get('next')
         email = request.form.get('email')
         password = request.form.get('password')
 
-        user = db.session.execute(db.select(User).where(User.email == email and User.password == password)).scalar()
-        next_page = request.args.get('next')
-        if not user:
+        user = db.session.execute(db.select(User).where(User.email == email)).scalar()
+        if not user or not check_password_hash(pwhash=user.password, password=password):
             flash('Invalid credentials', 'warning')
             return redirect(url_for('login', next=next_page))
         login_user(user)
